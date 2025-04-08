@@ -103,7 +103,7 @@ The backend processes PDFs and provides:
 ## Technologies Used
 
 - **Backend**:
-  - Python with FastAPI (or similar framework)
+  - Python with FastAPI 
   - [mistralai](https://pypi.org/project/mistralai/) - Mistral AI client for OCR processing
   - [google-genai](https://pypi.org/project/google-genai/) - Google Generative AI client for text analysis
   - Poetry for dependency management
