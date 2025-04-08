@@ -2,9 +2,10 @@ import sys
 import json
 import os
 import re
+import time  # Newly added for rate limiting
 from pathlib import Path
 from mistralai import DocumentURLChunk, Mistral
-from google import genai  # Gemini client library
+from google import genai  
 
 def extract_json_from_gemini_response(response_text):
     """
@@ -116,6 +117,10 @@ def process_ocr_results_for_embedding(ocr_result):
     gemini_client = genai.Client(api_key=gemini_api_key)
     model = 'gemini-2.0-flash'
     
+    # Rate limiting: track the number of requests and the start time of the window
+    gemini_request_count = 0
+    gemini_request_start = time.time()
+    
     chunks = []
     
     if "pages" in ocr_result:
@@ -125,6 +130,17 @@ def process_ocr_results_for_embedding(ocr_result):
             page_content = page.get("text") or page.get("markdown")
             
             if page_content and page_content.strip():
+                # Rate limit: If 15 requests have been sent, check the time elapsed
+                if gemini_request_count >= 15:
+                    elapsed = time.time() - gemini_request_start
+                    if elapsed < 60:
+                        sleep_time = 60 - elapsed
+                        print(f"Reached 15 Gemini requests in this minute. Sleeping for {sleep_time:.2f} seconds.")
+                        time.sleep(sleep_time)
+                    # Reset the counter and window
+                    gemini_request_count = 0
+                    gemini_request_start = time.time()
+                
                 prompt = (
                     "Analyze the following page content and divide it into distinct sections. "
                     "Treat each section as a logically self-contained unit of information—this could be a header with its related text, a group of paragraphs, a list, etc. "
@@ -142,6 +158,7 @@ def process_ocr_results_for_embedding(ocr_result):
                         model=model,
                         contents=prompt,
                     )
+                    gemini_request_count += 1  # Increment the request counter
                     print(f"Gemini response for page {page_number}: {response.text}")
                     
                     # Extract and fix JSON from the Gemini response
@@ -196,7 +213,7 @@ def main():
     """
     Main function to process a PDF file and extract meaningful semantic chunks with page information.
     """
-    pdf_path = "Sample.pdf"
+    pdf_path = "Thesis - Saurabh Zinjad.pdf"
     
     # Allow overriding PDF file path via command-line arguments
     if len(sys.argv) > 1:
