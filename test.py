@@ -2,11 +2,19 @@ import sys
 import json
 import os
 import re
-import time  # Newly added for rate limiting
+import time
+import uvicorn
 from pathlib import Path
+from fastapi import FastAPI, UploadFile, File, HTTPException, BackgroundTasks
+from fastapi.responses import JSONResponse
+from pydantic import BaseModel
+from typing import List, Dict, Any, Optional
 from mistralai import DocumentURLChunk, Mistral
-from google import genai  
+from google import genai
 
+app = FastAPI(title="PDF OCR & Analysis API")
+
+# Keep all the existing functions
 def extract_json_from_gemini_response(response_text):
     """
     Extract JSON content from a Gemini response string that may be wrapped
@@ -95,14 +103,6 @@ def process_pdf_with_ocr(pdf_path, api_key=None):
 def process_ocr_results_for_embedding(ocr_result):
     """
     Process OCR results into meaningful semantic chunks using Google Gemini.
-    
-    For each chunk, the Gemini prompt is instructed to include:
-      - 'content': The chunk's text content.
-      - 'type': The type/category of the chunk (e.g., heading, paragraph, list, etc.).
-      - 'meaning': A description of what the chunk represents.
-      - 'summary': A brief summary of the chunk.
-      
-    The page number is then added to each chunk.
     
     Args:
         ocr_result (dict): The OCR processing results from Mistral OCR.
@@ -209,33 +209,84 @@ def process_ocr_results_for_embedding(ocr_result):
     
     return chunks
 
-def main():
-    """
-    Main function to process a PDF file and extract meaningful semantic chunks with page information.
-    """
-    pdf_path = "Thesis - Saurabh Zinjad.pdf"
+# Define Pydantic models for request/response
+class ProcessResponse(BaseModel):
+    job_id: str
+    status: str
+    message: str
+
+class JobStatusResponse(BaseModel):
+    job_id: str
+    status: str
+    result: Optional[Dict[str, Any]] = None
     
-    # Allow overriding PDF file path via command-line arguments
-    if len(sys.argv) > 1:
-        pdf_path = sys.argv[1]
-    
+# Store for background jobs
+jobs = {}
+
+# Process PDF in background
+async def process_pdf_task(job_id: str, file_path: str):
     try:
-        print(f"Processing PDF: {pdf_path}")
-        ocr_results = process_pdf_with_ocr(pdf_path)
-        print("OCR processing completed.\nOCR Results:")
-        print(json.dumps(ocr_results, indent=2))
+        jobs[job_id]["status"] = "processing_ocr"
+        ocr_results = process_pdf_with_ocr(file_path)
         
-        print("\nExtracting meaningful chunks using Gemini...")
+        jobs[job_id]["status"] = "processing_chunks"
         chunks = process_ocr_results_for_embedding(ocr_results)
         
-        # Print the extracted chunks in formatted JSON
-        print("\nExtracted Chunks:")
-        print(json.dumps(chunks, indent=2))
+        jobs[job_id]["status"] = "completed"
+        jobs[job_id]["result"] = {
+            "ocr_results": ocr_results,
+            "chunks": chunks,
+            "total_chunks": len(chunks)
+        }
+    except Exception as e:
+        jobs[job_id]["status"] = "failed"
+        jobs[job_id]["error"] = str(e)
+
+# API endpoints
+@app.get("/")
+async def root():
+    return {"message": "PDF OCR & Analysis API is running"}
+
+@app.post("/process", response_model=ProcessResponse)
+async def process_pdf(background_tasks: BackgroundTasks, file: UploadFile = File(...)):
+    try:
+        # Save uploaded file
+        file_path = f"uploads/{file.filename}"
+        os.makedirs("uploads", exist_ok=True)
         
-        print(f"\nTotal chunks extracted: {len(chunks)}")
+        with open(file_path, "wb") as f:
+            f.write(await file.read())
+        
+        # Create a job ID
+        job_id = f"job_{int(time.time())}_{hash(file.filename) % 10000}"
+        jobs[job_id] = {"status": "queued"}
+        
+        # Process in background
+        background_tasks.add_task(process_pdf_task, job_id, file_path)
+        
+        return ProcessResponse(
+            job_id=job_id,
+            status="queued",
+            message="PDF processing has been queued."
+        )
         
     except Exception as e:
-        print(f"Error: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.get("/status/{job_id}", response_model=JobStatusResponse)
+async def get_job_status(job_id: str):
+    if job_id not in jobs:
+        raise HTTPException(status_code=404, detail="Job not found")
+    
+    status = jobs[job_id]["status"]
+    response = JobStatusResponse(job_id=job_id, status=status)
+    
+    if status == "completed":
+        response.result = jobs[job_id]["result"]
+    elif status == "failed":
+        response.result = {"error": jobs[job_id].get("error", "Unknown error")}
+    
+    return response
 
 if __name__ == "__main__":
-    main()
+    uvicorn.run("test:app", host="0.0.0.0", port=8000, reload=True)
