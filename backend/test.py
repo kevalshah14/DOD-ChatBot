@@ -7,12 +7,22 @@ import uvicorn
 from pathlib import Path
 from fastapi import FastAPI, UploadFile, File, HTTPException, BackgroundTasks
 from fastapi.responses import JSONResponse
+from fastapi.middleware.cors import CORSMiddleware  # Add this import
 from pydantic import BaseModel
 from typing import List, Dict, Any, Optional
 from mistralai import DocumentURLChunk, Mistral
 from google import genai
 
 app = FastAPI(title="PDF OCR & Analysis API")
+
+# Add CORS middleware
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["http://localhost:3000"],  # Frontend's URL
+    allow_credentials=True,
+    allow_methods=["*"],  # Allow all methods
+    allow_headers=["*"],  # Allow all headers
+)
 
 # Keep all the existing functions
 def extract_json_from_gemini_response(response_text):
