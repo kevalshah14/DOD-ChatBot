@@ -5,7 +5,14 @@ import { useState, useEffect } from "react";
 import { FiLoader, FiCheckCircle, FiAlertCircle } from "react-icons/fi";
 import FileUpload from "../components/FileUpload";
 import ChunkCard from "../components/ChunkCard";
-import { processPdf, checkJobStatus, Chunk, JobStatus } from "../services/api";
+import { processPdf, checkJobStatus, Chunk } from "../services/api";
+import MarkdownRenderer from "../components/MarkdownRenderer";
+import ChatComponent from "../components/ChatComponent"; // <-- Import Chat component
+
+interface OCRPage {
+  page: number;
+  fixed_text: string;
+}
 
 export default function Home() {
   const [file, setFile] = useState<File | null>(null);
@@ -13,6 +20,7 @@ export default function Home() {
   const [status, setStatus] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [chunks, setChunks] = useState<Chunk[]>([]);
+  const [fixedTextPages, setFixedTextPages] = useState<OCRPage[]>([]);
   const [isLoading, setIsLoading] = useState(false);
 
   const handleFileSelect = (selectedFile: File) => {
@@ -28,6 +36,7 @@ export default function Home() {
     setJobId(null);
     setStatus(null);
     setChunks([]);
+    setFixedTextPages([]);
 
     try {
       const data = await processPdf(file);
@@ -50,7 +59,13 @@ export default function Home() {
           setStatus(jobStatus.status);
 
           if (jobStatus.status === "completed" && jobStatus.result) {
+            // Update the chunks state if available
             setChunks(jobStatus.result.chunks);
+
+            // Set fixed OCR pages if available from ocr_results
+            if (jobStatus.result.ocr_results?.pages) {
+              setFixedTextPages(jobStatus.result.ocr_results.pages);
+            }
             clearInterval(intervalId);
           } else if (jobStatus.status === "failed") {
             setError("Processing failed");
@@ -70,10 +85,10 @@ export default function Home() {
 
   const getStatusDisplay = () => {
     if (!status) return null;
-    
+
     let statusText = "";
     let icon = null;
-    
+
     switch (status) {
       case "queued":
         statusText = "Queued for processing";
@@ -99,7 +114,7 @@ export default function Home() {
         statusText = status;
         icon = <FiLoader className="animate-spin" />;
     }
-    
+
     return (
       <div className="flex items-center gap-2 font-medium">
         <span>{icon}</span>
@@ -111,11 +126,11 @@ export default function Home() {
   return (
     <div className="max-w-6xl mx-auto px-4 py-8">
       <h1 className="text-3xl font-bold mb-6">PDF Analysis Tool</h1>
-      
+
+      {/* File upload form */}
       <div className="bg-white p-6 rounded-lg shadow-md mb-8">
         <form onSubmit={handleSubmit} className="flex flex-col gap-4">
           <FileUpload onFileSelect={handleFileSelect} />
-
           <button
             type="submit"
             disabled={!file || isLoading}
@@ -126,12 +141,14 @@ export default function Home() {
         </form>
       </div>
 
+      {/* Error message display */}
       {error && (
         <div className="bg-red-100 border border-red-400 text-red-700 px-4 py-3 rounded mb-4">
           {error}
         </div>
       )}
 
+      {/* Job status display */}
       {status && (
         <div className="bg-white p-6 rounded-lg shadow-md mb-8">
           <h2 className="text-xl font-semibold mb-2">Job Status</h2>
@@ -140,17 +157,37 @@ export default function Home() {
         </div>
       )}
 
+      {/* Document analysis chunk results */}
       {chunks.length > 0 && (
         <div className="mb-8">
           <h2 className="text-2xl font-semibold mb-4">Document Analysis Results</h2>
-          <p className="mb-4 text-gray-600">Found {chunks.length} content chunks in your document</p>
-          
+          <p className="mb-4 text-gray-600">
+            Found {chunks.length} content chunk{chunks.length > 1 ? "s" : ""} in your document
+          </p>
           <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
             {chunks.map((chunk, index) => (
               <ChunkCard key={index} chunk={chunk} />
             ))}
           </div>
         </div>
+      )}
+
+      {/* Fixed LaTeX (Markdown) results display */}
+      {fixedTextPages.length > 0 && (
+        <div className="bg-white p-6 rounded-lg shadow-md mt-8">
+          <h2 className="text-2xl font-semibold mb-4">OCR Fixed LaTeX Results</h2>
+          {fixedTextPages.map((page) => (
+            <div key={page.page} className="mb-6">
+              <h3 className="text-xl font-semibold mb-2">Page {page.page}</h3>
+              <MarkdownRenderer content={page.fixed_text} />
+            </div>
+          ))}
+        </div>
+      )}
+
+      {/* Render the Chat component once processing is complete */}
+      {jobId && status === "completed" && (
+        <ChatComponent jobId={jobId} />
       )}
     </div>
   );
